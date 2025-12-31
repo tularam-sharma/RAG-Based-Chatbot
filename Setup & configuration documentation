@@ -1,0 +1,267 @@
+================================================================================
+                    MULTI-VENDOR CHATBOT - SETUP & CONFIGURATION
+================================================================================
+
+PROJECT OVERVIEW
+================================================================================
+An intelligent Excel based chatbot using Django backend 
+- Uses Groq LLM API for FAQ responses
+- Supports multi-vendor FAQ management
+- Async CSV data processing with Celery
+- SQLite database with Django ORM
+
+
+PREREQUISITES
+================================================================================
+- Python 3.8+
+- Redis (optional, for Celery task queue)
+- Groq API Key (https://console.groq.com)
+
+
+INSTALLATION STEPS
+================================================================================
+
+1. CLONE & NAVIGATE
+   cd django_backend
+
+2. CREATE VIRTUAL ENVIRONMENT
+   python -m venv venv
+   venv\Scripts\activate  (Windows)
+   source venv/bin/activate  (Linux/Mac)
+
+3. INSTALL DEPENDENCIES
+   pip install -r ../requirements.txt
+   pip install django djangorestframework celery redis
+
+4. CREATE ENVIRONMENT FILE
+   Create .env file in project root:
+   
+   DJANGO_SECRET_KEY=your-secret-key
+   GROQ_API_KEY=your-groq-api-key
+   GROQ_MODEL=llama-3.3-70b-versatile
+
+5. DATABASE SETUP
+   python manage.py makemigrations
+   python manage.py migrate
+   python manage.py createsuperuser
+
+6. COLLECT STATIC FILES
+   python manage.py collectstatic
+
+
+RUNNING THE APPLICATION
+================================================================================
+
+START DJANGO BACKEND (Port 8000):
+   python manage.py runserver
+
+START STREAMLIT FRONTEND (Port 8501):
+   cd app
+   streamlit run main.py
+
+START CELERY WORKER (Optional - for async tasks):
+   celery -A django_backend worker -l info
+
+START CELERY BEAT (Optional - for scheduled tasks):
+   celery -A django_backend beat -l info
+
+
+KEY CONFIGURATION FILES
+================================================================================
+
+1. settings.py
+   - Django settings, database config, installed apps
+   - Celery broker configuration
+   - Media uploads directory
+   Location: django_backend/backend/settings.py
+
+2. urls.py
+   - API routes and endpoint mappings
+   Location: django_backend/backend/urls.py
+
+3. models.py
+   - Vendor, VendorCSVUpload, VendorIngestionTask models
+   Location: django_backend/vendor_faqs/models.py
+
+4. tasks.py
+   - Async Celery tasks for CSV processing
+   Location: django_backend/vendor_faqs/tasks.py
+
+5. requirements.txt
+   - Project dependencies
+   - Includes: streamlit, pandas, groq, chromadb, etc.
+
+
+PROJECT STRUCTURE
+================================================================================
+
+django_backend/
+├── backend/                    Django configuration
+│   ├── settings.py            Django settings
+│   ├── urls.py                URL routing
+│   ├── wsgi.py                WSGI config
+│   └── celery.py              Celery config
+├── vendor_faqs/               Main app
+│   ├── models.py              Database models
+│   ├── views.py               API views
+│   ├── serializers.py         DRF serializers
+│   ├── tasks.py               Celery tasks
+│   ├── llm_response.py        LLM integration
+│   ├── faq.py                 FAQ logic
+│   ├── urls.py                App routes
+│   ├── admin.py               Django admin
+│   └── migrations/            Database migrations
+├── media/                     Uploaded CSV files
+├── templates/                 HTML templates
+├── manage.py                  Django CLI
+├── db.sqlite3                 SQLite database
+└── requirements.txt           Dependencies
+
+
+CORE FEATURES
+================================================================================
+
+1. VENDOR MANAGEMENT
+   - Create and manage multiple vendors
+   - Each vendor has unique FAQ data
+   - Vendor-specific API endpoints
+
+2. CSV UPLOAD & PROCESSING
+   - Upload FAQ/product data via CSV
+   - Async processing with Celery
+   - Status tracking (pending, processing, completed, failed)
+   - File storage in media/vendor_uploads/
+
+3. FAQ CHATBOT
+   - Intent detection (FAQ vs SQL queries)
+   - LLM-powered responses using Groq API
+   - Vector embeddings with ChromaDB
+   - Semantic search with sentence-transformers
+
+4. ADMIN DASHBOARD
+   - Django admin interface at http://localhost:8000/admin/
+   - Manage vendors, uploads, and ingestion tasks
+
+
+API ENDPOINTS
+================================================================================
+
+Base URL: http://localhost:8000/api/
+
+GET  /vendors/                 List all vendors
+POST /vendors/                 Create vendor
+GET  /vendors/{id}/            Get vendor details
+POST /vendors/{id}/upload/     Upload CSV
+GET  /vendors/{id}/uploads/    List uploads
+GET  /chat/                    Chat endpoint
+POST /chat/                    Send message
+
+
+DATABASE MODELS
+================================================================================
+
+1. Vendor
+   - name: CharField(max_length=200)
+   - slug: SlugField(unique=True)
+
+2. VendorCSVUpload
+   - vendor: ForeignKey(Vendor)
+   - file: FileField
+   - filename: CharField
+   - status: CharField (pending, processing, completed, failed)
+   - created_at: DateTimeField
+   - updated_at: DateTimeField
+   - error_message: TextField
+
+3. VendorIngestionTask
+   - upload: ForeignKey(VendorCSVUpload)
+   - celery_task_id: CharField
+   - status: CharField
+   - started_at: DateTimeField
+   - finished_at: DateTimeField
+   - error_message: TextField
+
+
+CELERY CONFIGURATION
+================================================================================
+
+Redis Broker: redis://localhost:6379/0
+Result Backend: redis://localhost:6379/0
+
+Development Mode:
+- CELERY_TASK_ALWAYS_EAGER = True (runs tasks synchronously)
+- No separate worker needed
+
+Production Mode:
+- Run celery worker and beat scheduler separately
+- Use proper Redis/RabbitMQ broker
+
+
+TROUBLESHOOTING
+================================================================================
+
+1. Redis Connection Error
+   - Install Redis or comment out CELERY_BROKER_URL in settings.py
+   - Set CELERY_TASK_ALWAYS_EAGER = True for development
+
+2. Groq API Key Not Working
+   - Verify API key in .env file
+   - Check Groq quota at console.groq.com
+
+3. Database Errors
+   - Run: python manage.py migrate
+   - Delete db.sqlite3 and re-migrate if needed
+
+4. Port Already in Use
+   - Django: python manage.py runserver 8001
+   - Streamlit: streamlit run main.py --server.port 8502
+
+
+ENVIRONMENT VARIABLES
+================================================================================
+
+Required:
+- GROQ_API_KEY          Groq LLM API key
+- GROQ_MODEL            Model name (llama-3.3-70b-versatile)
+
+Optional:
+- DJANGO_SECRET_KEY     Django secret (defaults to dev key)
+- DEBUG                 Debug mode (defaults to True)
+
+
+SECURITY NOTES
+================================================================================
+
+For Production:
+1. Set DEBUG = False in settings.py
+2. Generate secure SECRET_KEY
+3. Update ALLOWED_HOSTS with actual domain
+4. Use environment variables for sensitive data
+5. Configure CSRF_TRUSTED_ORIGINS
+6. Set up HTTPS
+7. Use Redis/RabbitMQ for Celery (not in-memory)
+
+
+USEFUL COMMANDS
+================================================================================
+
+python manage.py shell              Django Python shell
+python manage.py createsuperuser    Create admin user
+python manage.py makemigrations     Create migration files
+python manage.py migrate            Apply migrations
+python manage.py dumpdata            Export database
+python manage.py loaddata            Import database
+python manage.py test               Run tests
+
+
+DOCUMENTATION FILES
+================================================================================
+
+
+- requirements.txt     Python dependencies
+- settings.py          Configuration details
+
+
+================================================================================
+Created: December 29, 2025
+================================================================================

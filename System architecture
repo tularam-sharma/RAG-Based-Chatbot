@@ -1,0 +1,764 @@
+================================================================================
+                        SYSTEM ARCHITECTURE EXPLANATION
+================================================================================
+
+PROJECT: Multi-Vendor Excel based Chatbot with Generative AI (RAG Pattern)
+DATE: December 29, 2025
+
+================================================================================
+1. ARCHITECTURE OVERVIEW
+================================================================================
+
+This is a MULTI-LAYERED, EVENT-DRIVEN architecture using the Retrieval 
+Augmented Generation (RAG) pattern. It combines:
+
+- Django REST API Backend    (API server for data management)
+- ChromaDB Vector Store      (Semantic search on embeddings)
+- Groq LLM API              (Large Language Model - Llama 3.3)
+- Celery Task Queue         (Async CSV processing)
+- SQLite Database           (Metadata & logs storage)
+
+Flow: User → Django UI → Vector DB/LLM → Response
+
+
+================================================================================
+2. HIGH-LEVEL SYSTEM DIAGRAM
+================================================================================
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        DJANGO UI                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│  API Endpoints (DRF)         Web Views             Admin Panel          │
+│  - CSV Upload               - Home page            - Vendor mgmt        │
+│  - Chat                     - Chat UI              - Upload mgmt        │
+│  - Vendor CRUD              - Upload status        - Task monitoring    │
+│  - Status tracking          - FAQ viewing                               │
+└──────────────────────┬───────────────────┬──────────────────────────────┘
+                       │                   │
+                       ▼                   ▼
+          ┌──────────────────┐  ┌──────────────────────┐
+          │   SQLite DB      │  │   Celery Task Queue  │
+          │ (Metadata logs)  │  │  (Async processing)  │
+          └──────────────────┘  └──────────────────────┘
+                       │                   │
+                       └─────────┬─────────┘
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      DATA PROCESSING LAYER                              │
+├─────────────────────────────────────────────────────────────────────────┤
+│  CSV Upload Processing (Async Celery Task)                              │
+│  1. Read CSV file                                                       │
+│  2. Validate columns (question, answer)                                 │
+│  3. Generate embeddings using Sentence Transformers                     │
+│  4. Store in ChromaDB (vendor-scoped collections)                       │
+└─────────────────────────────────────────────────────────────────────────┘
+                               │
+        ┌──────────────────────┴──────────────────────┐
+        ▼                                             ▼
+┌──────────────────────┐                  ┌──────────────────────┐
+│   ChromaDB Vector            │                  │    Groq LLM API              │
+│   Database Store             │                  │  (Llama 3.3 70B)             │
+│  (Embeddings)                │                  │  (Comprehension)             │
+└──────────────────────┘                  └──────────────────────┘
+        │                                             │
+        └──────────────────────┬──────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     INFERENCE/GENERATION LAYER                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│  FAQ Chain (RAG Pattern)                                                │
+│  1. Semantic search in ChromaDB (find top 2 matching FAQs)              │
+│  2. Retrieve context (question + answer)                                │
+│  3. Pass to Groq LLM with context                                       │
+│  4. Generate final response                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+3. COMPONENT BREAKDOWN
+================================================================================
+
+3.1 STREAMLIT FRONTEND
+────────────────────
+Location: app/main.py (not shown but in workspace)
+Purpose: User-facing chatbot interface
+
+Features:
+  - Chat interface for querying FAQs
+  - Vendor selection dropdown
+  - CSV file upload UI
+  - Real-time status updates
+  - Message history
+
+Flow:
+  1. User selects vendor
+  2. User types question
+  3. Frontend sends to Django API
+  4. Receives and displays response
+
+
+3.2 DJANGO BACKEND
+──────────────────
+Location: django_backend/
+
+Key Components:
+
+a) VIEWS (APIView & FunctionBased)
+   File: vendor_faqs/views.py
+   
+   Classes:
+   - VendorListCreateView      : GET/POST vendors
+   - CSVUploadView             : POST CSV files
+   - TriggerIngestView         : POST trigger async ingestion
+   - UploadStatusView          : GET upload status
+   - FAQListView               : GET raw FAQ rows
+   - home()                    : Render home page
+
+   Responsibilities:
+   - Validate requests
+   - Route to correct handler
+   - Return serialized responses
+   - Call Celery tasks
+
+b) MODELS (Django ORM)
+   File: vendor_faqs/models.py
+   
+   Model Hierarchy:
+   
+   Vendor
+   └── name: CharField
+   └── slug: SlugField(unique)
+   
+   VendorCSVUpload (ForeignKey: Vendor)
+   └── file: FileField
+   └── status: CharField (pending/processing/completed/failed)
+   └── created_at: DateTimeField
+   └── error_message: TextField
+   
+   VendorIngestionTask (ForeignKey: VendorCSVUpload)
+   └── celery_task_id: CharField
+   └── status: CharField
+   └── started_at, finished_at: DateTimeField
+
+c) SERIALIZERS (Django REST Framework)
+   File: vendor_faqs/serializers.py
+   
+   Purpose: Convert models to JSON and vice versa
+   
+   - VendorSerializer
+   - VendorCSVUploadSerializer
+   - VendorIngestionTaskSerializer
+
+d) CELERY TASKS (Async Processing)
+   File: vendor_faqs/tasks.py
+   
+   Main Task: ingest_vendor_csv_task(upload_id, task_id)
+   
+   Process:
+   1. Get upload and task from DB
+   2. Set status to 'processing'
+   3. Read CSV file
+   4. Validate columns
+   5. Generate embeddings via SentenceTransformer
+   6. Store in ChromaDB
+   7. Update status to 'completed'
+   8. Handle errors gracefully
+
+e) DATABASE (SQLite)
+   File: django_backend/db.sqlite3
+   
+   Purpose:
+   - Store vendor metadata
+   - Track upload history
+   - Log ingestion tasks
+   - Audit trail
+
+
+3.3 VECTOR STORAGE (ChromaDB)
+──────────────────────────────
+Location: In-memory by default (can persist to disk)
+
+Purpose: Store semantic embeddings of FAQ questions
+
+Structure:
+  Collection: faqs_vendor_{vendor_id}
+  
+  Each document contains:
+  - documents: Question text
+  - metadatas: { answer: "..." }
+  - ids: "{vendor_id}_upload{id}_id_{idx}"
+  - embeddings: 384-dimensional vectors (from SentenceTransformer)
+
+Embedding Model: sentence-transformers/all-MiniLM-L6-v2
+  - 384-dimensional embeddings
+  - Fast inference
+  - Good for semantic similarity
+
+Usage:
+  - Semantic search (find top-2 similar FAQs)
+  - Context retrieval for LLM
+  - Vector similarity scoring
+
+
+3.4 LLM INTEGRATION (Groq)
+──────────────────────────
+Location: vendor_faqs/llm_response.py, vendor_faqs/faq.py
+
+API: Groq (inference-as-a-service)
+Model: Llama 3.3 70B Versatile
+
+Two Main Functions:
+
+a) llm_chain(question, vendor_id)
+   File: llm_response.py
+   
+   Used when: No FAQ data available
+   Process:
+   1. Send question to Groq
+   2. Get LLM-generated response
+   3. Append disclaimer note
+   
+   System Prompt: "Plain natural language response"
+
+b) faq_chain(question, vendor_id)
+   File: faq.py
+   
+   RAG Pattern Implementation:
+   1. get_relevant_qa()
+      - Query ChromaDB with question
+      - Return top 2 matching FAQs
+   2. generate_answer(query, context)
+      - Pass context + question to Groq
+      - System prompt: "Answer only from context"
+   3. Return LLM-generated answer
+   
+   Fallback: If no collection exists, use llm_chain()
+
+
+================================================================================
+4. DATA FLOW - REQUEST LIFECYCLE
+================================================================================
+
+SCENARIO 1: CSV UPLOAD & INGESTION
+──────────────────────────────────
+
+Step 1: User Uploads CSV via Django UI
+   Input: CSV file with 'question' and 'answer' columns
+   
+Step 2: CSVUploadView.post()
+   - Validate vendor exists
+   - Create VendorCSVUpload model
+   - Save file to media/vendor_uploads/{year}/{month}/
+   - Return upload metadata
+   
+Step 3: TriggerIngestView.post()
+   - Create VendorIngestionTask (status='queued')
+   - Enqueue Celery task: ingest_vendor_csv_task.delay()
+   - Return task metadata with celery_task_id
+   
+Step 4: Celery Worker (Background Process)
+   a. ingest_vendor_csv_task() starts
+   b. Update task.status = 'started'
+   c. Initialize:
+      - SentenceTransformer embedding function
+      - ChromaDB client
+      - Collection name: faqs_vendor_{vendor_id}
+   d. Read CSV file
+   e. Validate columns
+   f. Generate embeddings for all questions
+   g. Store in ChromaDB collection
+   h. Update upload.status = 'completed'
+   i. Update task.status = 'finished'
+   
+Step 5: User Checks Status
+   - UploadStatusView.get() → retrieves status from DB
+   - Status changes: pending → processing → completed
+
+
+SCENARIO 2: CHAT QUERY (FAQ Mode)
+──────────────────────────────────
+
+Step 1: User Types Question in Streamlit
+   Input: "What is your return policy?"
+   
+Step 2: Streamlit Calls Django Chat Endpoint
+   POST /api/vendors/{vendor_id}/chat/
+   {
+     "question": "What is your return policy?",
+     "message": "What is your return policy?"
+   }
+   
+Step 3: ChatView (in views.py - not fully shown)
+   - Extract vendor_id and question
+   - Call faq_chain(question, vendor_id)
+   
+Step 4: faq_chain() - RAG Pipeline
+   a. get_relevant_qa(question, vendor_id)
+      - Get ChromaDB collection for vendor
+      - Query with: query_texts=[question]
+      - Return: top 2 matching FAQs with embeddings
+      
+   b. Extract context from results
+      - documents: matching questions
+      - metadatas: corresponding answers
+      
+   c. generate_answer(question, context)
+      - Create prompt: "Context: {...} Question: {...}"
+      - Call Groq API (temperature=0.2)
+      - Receive response
+      
+   d. Return final answer
+      
+Step 5: Streamlit Displays Response
+   - Show answer in chat interface
+   - Store in message history
+
+
+SCENARIO 3: FALLBACK (No FAQ Data)
+───────────────────────────────────
+
+If vendor has no uploaded FAQs:
+   1. faq_chain() raises error
+   2. Fallback to llm_chain()
+   3. llm_chain() calls Groq directly
+   4. Returns: "LLM-generated answer + disclaimer"
+
+
+================================================================================
+5. DATABASE SCHEMA
+================================================================================
+
+TABLE: Vendor
+─────────────
+┌─────────────┬──────────────┬──────────────┐
+│ id (PK)     │ name         │ slug         │
+├─────────────┼──────────────┼──────────────┤
+│ 1           │ Acme Store   │ acme-store   │
+│ 2           │ Tech Gadgets │ tech-gadgets │
+└─────────────┴──────────────┴──────────────┘
+
+TABLE: VendorCSVUpload
+──────────────────────
+┌──────────────┬──────────────┬─────────────┬────────────────┐
+│ id (PK)      │ vendor_id    │ file        │ status         │
+├──────────────┼──────────────┼─────────────┼────────────────┤
+│ 1            │ 1            │ faq_data.csv│ completed      │
+│ 2            │ 1            │ faq_v2.csv  │ processing     │
+│ 3            │ 2            │ faqs.csv    │ pending        │
+└──────────────┴──────────────┴─────────────┴────────────────┘
+
+TABLE: VendorIngestionTask
+──────────────────────────
+┌──────────────┬───────────────┬──────────────┬─────────────┐
+│ id (PK)      │ upload_id (FK)│ celery_task_id│ status     │
+├──────────────┼───────────────┼──────────────┼─────────────┤
+│ 1            │ 1             │ abc123...    │ finished    │
+│ 2            │ 2             │ def456...    │ started     │
+└──────────────┴───────────────┴──────────────┴─────────────┘
+
+
+================================================================================
+6. KEY ALGORITHMS & PATTERNS
+================================================================================
+
+6.1 RAG (Retrieval Augmented Generation) Pattern
+─────────────────────────────────────────────────
+
+Classic RAG workflow implemented in faq_chain():
+
+   Question Input
+        ↓
+   [Embedding Layer]
+   - Convert question to 384-dim vector
+   - Using SentenceTransformer
+        ↓
+   [Retrieval Layer]
+   - Semantic search in ChromaDB
+   - Find K=2 most similar FAQs
+   - Cosine similarity in embedding space
+        ↓
+   [Context Assembly]
+   - Retrieved documents: Q1, Q2
+   - Associated metadata: A1, A2
+   - Format as context string
+        ↓
+   [Generation Layer]
+   - LLM receives: (context + query)
+   - Groq API processes
+   - Generates grounded response
+        ↓
+   Response Output
+
+
+Advantage: Answers grounded in actual FAQ data, not hallucinations
+
+
+6.2 Async Task Processing Pattern
+──────────────────────────────────
+
+Celery Task Pattern for CSV ingestion:
+
+   User Request (Synchronous)
+        ↓
+   Create Task Object
+        ↓
+   Enqueue to Queue
+        ↓
+   Immediate Response (202 Accepted)
+   with task_id for polling
+        ↓
+   [Celery Worker - Background]
+   Picks up task from queue
+   Processes CSV
+   Updates DB
+   Reports status
+
+
+Benefits:
+  - Non-blocking user requests
+  - Handle large files
+  - Automatic retry on failure
+  - Status tracking
+
+
+6.3 Vendor Scoping
+──────────────────
+
+ChromaDB collections are vendor-specific:
+
+   Collection Name Pattern: faqs_vendor_{vendor_id}
+   
+   Example:
+   - faqs_vendor_1 (contains FAQ embeddings for Vendor 1)
+   - faqs_vendor_2 (contains FAQ embeddings for Vendor 2)
+   
+   ID Pattern:
+   {vendor_id}_upload{upload_id}_id_{row_index}
+   
+   Example:
+   1_upload5_id_0  (Vendor 1, Upload 5, Row 0)
+
+
+Benefits:
+  - True multi-vendor isolation
+  - Independent FAQ databases
+  - Scalable architecture
+  - Easy vendor offboarding
+
+
+================================================================================
+7. API ENDPOINTS
+================================================================================
+
+BASE: http://localhost:8000/api/
+
+VENDOR MANAGEMENT
+─────────────────
+GET  /vendors/
+     Response: [{ id, name, slug }, ...]
+
+POST /vendors/
+     Body: { name, slug }
+     Response: { id, name, slug }
+
+
+CSV UPLOAD & INGESTION
+──────────────────────
+POST /vendors/{vendor_id}/csv-uploads/
+     Body: FormData(file)
+     Response: { id, vendor_id, file, status, created_at, ... }
+
+GET  /vendors/{vendor_id}/csv-uploads/{upload_id}/status/
+     Response: { id, vendor_id, file, status, error_message, ... }
+
+POST /vendors/{vendor_id}/faqs/ingest/
+     Body: { upload_id (optional) }
+     Response: { id, upload_id, celery_task_id, status, ... }
+
+
+FAQ OPERATIONS
+──────────────
+GET  /vendors/{vendor_id}/faqs/
+     Response: { upload_id, rows: [...] }
+
+
+================================================================================
+8. CONFIGURATION & SETTINGS
+================================================================================
+
+Location: django_backend/backend/settings.py
+
+Critical Settings:
+──────────────────
+
+DATABASE:
+  Engine: Django ORM with SQLite
+  Location: django_backend/db.sqlite3
+  
+MEDIA:
+  Root: django_backend/media/
+  Upload Path: vendor_uploads/{year}/{month}/
+  
+CELERY:
+  Broker: redis://localhost:6379/0
+  Backend: redis://localhost:6379/0
+  Mode: TASK_ALWAYS_EAGER = True (sync for dev)
+  
+INSTALLED_APPS:
+  - rest_framework (DRF)
+  - vendor_faqs (main app)
+  
+ALLOWED_HOSTS: ['*'] (dev only)
+
+
+Environment Variables:
+──────────────────────
+GROQ_API_KEY         Required. Groq API key.
+GROQ_MODEL           Required. Model name (llama-3.3-70b-versatile)
+DJANGO_SECRET_KEY    Optional. Django secret key.
+
+
+================================================================================
+9. DEPLOYMENT ARCHITECTURE
+================================================================================
+
+Production Setup:
+─────────────────
+
+┌─────────────────────────────────────────────────────────────────┐
+│                        Load Balancer (Nginx)                    │
+└──────────────────────┬──────────────────────┬──────────────────┘
+                                │                      │
+        ┌──────────────┴───────────┐  ┌──────┴──────────────┐
+        ▼                          ▼  ▼                     ▼
+   ┌─────────────┐         ┌──────────────┐      ┌──────────────┐
+   │ Gunicorn         │         │ Celery Worker     │      │ Celery Beat  │
+   │ (Django)         │         │ (Tasks)           │      │ (Scheduler)  │
+   │ Port: 8000       │         │ (Multiple)        │      │              │
+   └─────────────┘         └──────────────┘      └──────────────┘
+        │                          │
+        └──────────┬───────────────┘
+                       │
+        ┌──────────┴──────────┐
+        ▼                     ▼
+   ┌──────────────┐      ┌────────────────┐
+   │ PostgreSQL        │      │ Redis Broker         │
+   │ (Production)      │      │ (Message Queue)      │
+   └──────────────┘      └────────────────┘
+        │                     │
+        └─────────────┬───────┘
+                      ▼
+            ┌──────────────────┐
+            │  Persistent      │
+            │  Vector Store    │
+            │  (ChromaDB on    │
+            │   Disk or Cloud) │
+            └──────────────────┘
+
+
+Scaling Strategies:
+  1. Horizontal scaling: Multiple Gunicorn workers
+  2. Celery: Multiple worker processes/threads
+  3. Database: PostgreSQL replication
+  4. Vector DB: ChromaDB distributed mode or managed service
+  5. CDN: Serve static files
+
+
+================================================================================
+10. SECURITY ARCHITECTURE
+================================================================================
+
+Current (Development):
+──────────────────────
+  ✓ SQLite (local)
+  ✓ ALLOWED_HOSTS = ['*']
+  ✓ DEBUG = True
+  ✓ Auth: None (open API)
+
+For Production:
+───────────────
+  1. Authentication
+     - Django Token Auth or JWT
+     - API key validation
+     - Role-based access control
+  
+  2. Encryption
+     - HTTPS/TLS (nginx)
+     - Secrets management (env vars)
+     - Database encryption at rest
+  
+  3. Rate Limiting
+     - Throttle API requests
+     - File size limits
+     - Rate limit LLM API calls
+  
+  4. Input Validation
+     - CSV schema validation ✓ (already done)
+     - Query length limits
+     - SQL injection prevention
+  
+  5. Monitoring
+     - Log all API requests
+     - Monitor Celery tasks
+     - Alert on failures
+
+
+================================================================================
+11. ERROR HANDLING & RESILIENCE
+================================================================================
+
+CSV Ingestion Error Handling:
+────────────────────────────
+  try/except in ingest_vendor_csv_task():
+    1. Validation error → Set status='failed'
+    2. File not found → error_message populated
+    3. CSV parse error → Status 'failed'
+    4. Chroma connection → Exception logged
+  
+  User can retry upload
+
+
+FAQ Query Fallback:
+───────────────────
+  faq_chain() → ChromaDB error
+    ↓
+  Catch exception
+    ↓
+  Fall back to llm_chain()
+    ↓
+  Return LLM response + disclaimer
+
+
+Request Timeout:
+────────────────
+  - Django timeout settings
+  - Groq API timeout (default)
+  - Celery task timeout config
+
+
+================================================================================
+12. PERFORMANCE CONSIDERATIONS
+================================================================================
+
+Embedding Generation:
+─────────────────────
+  - Model: sentence-transformers/all-MiniLM-L6-v2
+  - Speed: ~20ms per sentence
+  - For 1000 FAQs: ~20 seconds
+  - Batch processing in Celery → No UI blocking
+
+
+Vector Search:
+──────────────
+  - ChromaDB semantic search
+  - K=2 results retrieved (configurable)
+  - Cosine similarity
+  - In-memory (fast) or persistent
+
+
+LLM Inference:
+──────────────
+  - Groq API: ~2-5 seconds per query
+  - Model size: 70B parameters
+  - Temperature=0.2 (deterministic)
+  - Max tokens: 1024
+
+
+Database Queries:
+─────────────────
+  - SQLite (simple, fast for small datasets)
+  - Indexes on vendor_id, upload_id
+  - Foreign key constraints
+
+
+Caching Opportunities:
+─────────────────────
+  - Cache FAQ collections (Redis)
+  - Cache LLM responses for duplicate questions
+  - Batch embeddings generation
+
+
+================================================================================
+13. MONITORING & DEBUGGING
+================================================================================
+
+Admin Dashboard:
+────────────────
+  URL: http://localhost:8000/admin/
+  
+  View:
+  - Vendor list
+  - Upload history
+  - Ingestion task status
+  - Error messages
+  - Timestamps
+
+
+Logs:
+──────
+  Locations:
+  - Django logs: console (development)
+  - Celery logs: worker console
+  - CSV errors: VendorCSVUpload.error_message
+  - Task errors: VendorIngestionTask.error_message
+
+
+Debugging Tools:
+────────────────
+  - Django shell: python manage.py shell
+  - Inspect ChromaDB: chroma_client.list_collections()
+  - Check task status: VendorIngestionTask.objects.all()
+  - View uploads: VendorCSVUpload.objects.filter(vendor_id=X)
+
+
+================================================================================
+14. FUTURE ENHANCEMENTS
+================================================================================
+
+Scalability:
+  - Multi-region deployment
+  - Distributed vector DB
+  - Caching layer (Redis)
+  - Load balancing
+
+Functionality:
+  - User authentication
+  - Chat history storage
+  - Multi-language support
+  - Analytics dashboard
+  - A/B testing framework
+
+ML/AI:
+  - Fine-tuned LLM models
+  - Custom embeddings
+  - Context window expansion
+  - Intent classification
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Architecture Pattern: Microservices + RAG + Async Tasks
+
+Key Strengths:
+  1. Scalable - vendor-scoped data
+  2. Responsive - async processing
+  3. Intelligent - RAG pattern for grounded responses
+  4. Maintainable - clear separation of concerns
+  5. Extensible - easy to add features
+
+Data Flow: CSV → Embedding → Storage → Retrieval → LLM → Response
+
+Technologies:
+  - Django REST Framework (API)
+  - Celery (task queue)
+  - ChromaDB (vector DB)
+  - Groq (LLM)
+  - SentenceTransformer (embeddings)
+  - Streamlit (UI)
+
+================================================================================
+END OF ARCHITECTURE DOCUMENTATION
+================================================================================
