@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Vendors - Multi-Vendor ChatBot{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Manage Vendors</h1>
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label for="name">Vendor Name:</label>
+            <input type="text" id="name" name="name" required>
+        </div>
+        <div class="form-group">
+            <label for="slug">Vendor Slug:</label>
+            <input type="text" id="slug" name="slug" required placeholder="e.g., acme-store">
+        </div>
+        <button type="submit">Create Vendor</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Existing Vendors</h2>
+    {% if vendors %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Slug</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vendor in vendors %}
+                <tr>
+                    <td>{{ vendor.id }}</td>
+                    <td>{{ vendor.name }}</td>
+                    <td>{{ vendor.slug }}</td>
+                    <td>
+                        <a href="/upload/?vendor_id={{ vendor.id }}" class="btn-secondary" style="padding:0.5rem;text-decoration:none;display:inline-block;">Upload CSV</a>
+                        <a href="/ingestion/?vendor_id={{ vendor.id }}" class="btn-secondary" style="padding:0.5rem;text-decoration:none;display:inline-block;">Status</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No vendors yet. Create one above.</p>
+    {% endif %}
+</div>
+{% endblock %}

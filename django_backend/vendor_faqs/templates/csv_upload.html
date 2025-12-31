@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Upload CSV - Multi-Vendor ChatBot{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Upload Vendor CSV</h1>
+    
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label for="vendor_id">Select Vendor:</label>
+            <select id="vendor_id" name="vendor_id" required>
+                <option value="">-- Choose a vendor --</option>
+                {% for vendor in vendors %}
+                    <option value="{{ vendor.id }}" {% if selected_vendor_id == vendor.id %}selected{% endif %}>
+                        {{ vendor.name }} (ID: {{ vendor.id }})
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="file">CSV File (must contain 'question' and 'answer' columns):</label>
+            <input type="file" id="file" name="file" accept=".csv" required>
+        </div>
+
+        <button type="submit">Upload & Ingest</button>
+        <a href="/vendors/" class="btn-secondary" style="text-decoration:none;">Back to Vendors</a>
+    </form>
+</div>
+
+{% if upload_result %}
+<div class="card">
+    <h2>Upload Result</h2>
+    {% if upload_result.success %}
+        <div class="alert alert-success">
+            <strong>Success!</strong> CSV uploaded and ingestion triggered.
+        </div>
+        <p><strong>Upload ID:</strong> {{ upload_result.upload_id }}</p>
+        <p><strong>File:</strong> {{ upload_result.filename }}</p>
+        <p><strong>Status:</strong> {{ upload_result.status }}</p>
+        <a href="/ingestion/?vendor_id={{ upload_result.vendor_id }}&upload_id={{ upload_result.upload_id }}" class="btn-secondary">View Status</a>
+    {% else %}
+        <div class="alert alert-error">
+            <strong>Error:</strong> {{ upload_result.error }}
+        </div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

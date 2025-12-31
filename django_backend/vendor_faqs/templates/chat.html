@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}Chat - Multi-Vendor ChatBot{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Chat with FAQ Bot</h1>
+    
+    <div class="form-group">
+        <label for="vendor_id">Select Vendor:</label>
+        <select id="vendor_id" onchange="selectVendor()">
+            <option value="">-- Choose a vendor --</option>
+            {% for vendor in vendors %}
+                <option value="{{ vendor.id }}" {% if selected_vendor_id == vendor.id %}selected{% endif %}>
+                    {{ vendor.name }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+</div>
+
+{% if selected_vendor %}
+<div class="card">
+    <h2>Chat with {{ selected_vendor.name }}</h2>
+    
+    <div id="chat-messages" style="height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 1rem; margin-bottom: 1rem; background: #fafafa; border-radius: 4px;">
+        {% if messages %}
+            {% for msg in messages %}
+                <div style="margin-bottom: 1rem; text-align: {% if msg.role == 'user' %}right{% else %}left{% endif %};">
+    <div style="display: inline-block; max-width: 70%; padding: 0.75rem; border-radius: 8px; {% if msg.role == 'user' %}background: #3498db; color: white;{% else %}background: white; border: 1px solid #ddd; color: inherit;{% endif %}">
+                   
+                        <strong>{{ msg.role|title }}:</strong> {{ msg.content }}
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p id="empty-msg" style="color: #999;">Start a conversation...</p>
+        {% endif %}
+    </div>
+
+    <form id="chat-form" style="display: flex; gap: 0.5rem;">
+        {% csrf_token %}
+        <input type="hidden" name="vendor_id" value="{{ selected_vendor.id }}">
+        <input type="text" id="query-input" name="query" placeholder="Ask a question..." required style="flex:1;">
+        <button type="submit" id="send-btn">Send</button>
+    </form>
+</div>
+{% else %}
+<div class="card">
+    <p>Select a vendor above to start chatting.</p>
+</div>
+{% endif %}
+
+<script>
+function selectVendor() {
+    const vendorId = document.getElementById('vendor_id').value;
+    if (vendorId) {
+        window.location.href = '/chat/?vendor_id=' + vendorId;
+    }
+}
+
+document.getElementById('chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const vendorId = document.querySelector('input[name="vendor_id"]').value;
+    const query = document.getElementById('query-input').value.trim();
+    const csrfToken = document.querySelector('[name="csrfmiddlewaretoken"]').value;
+    
+    if (!query) return;
+    
+    // Hide empty message
+    const emptyMsg = document.getElementById('empty-msg');
+    if (emptyMsg) emptyMsg.style.display = 'none';
+    
+    const messagesDiv = document.getElementById('chat-messages');
+    
+    // Add user message immediately
+    const userDiv = document.createElement('div');
+    userDiv.style.marginBottom = '1rem';
+    userDiv.style.textAlign = 'right';
+    userDiv.innerHTML = `
+        <div style="display: inline-block; max-width: 70%; padding: 0.75rem; border-radius: 8px; background: #3498db; color: white;">
+            <strong>User:</strong> ${query}
+        </div>
+    `;
+    messagesDiv.appendChild(userDiv);
+    
+    // Clear input
+    document.getElementById('query-input').value = '';
+    
+    // Scroll to bottom
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    
+    // Send to server
+    try {
+        const response = await fetch('/chat/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({ vendor_id: vendorId, query: query })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const assistantDiv = document.createElement('div');
+            assistantDiv.style.marginBottom = '1rem';
+            assistantDiv.innerHTML = `
+                <div style="display: inline-block; max-width: 70%; padding: 0.75rem; border-radius: 8px; background: white; border: 1px solid #ddd;">
+                    <strong>Assistant:</strong> ${data.response}
+                </div>
+            `;
+            messagesDiv.appendChild(assistantDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        alert('Error sending message: ' + error);
+    }
+});
+</script>
+{% endblock %}

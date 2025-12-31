@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Multi-Vendor ChatBot{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Welcome to Multi-Vendor ChatBot</h1>
+    <p>A multi-vendor platform for managing FAQs and chatting with an AI-powered bot trained on vendor-specific CSV data.</p>
+</div>
+
+<div class="grid">
+    <div class="card">
+        <h2>{{ vendors_count }}</h2>
+        <p>Vendors</p>
+        <a href="/vendors/" class="btn-secondary" style="text-decoration:none;">Manage</a>
+    </div>
+
+    <div class="card">
+        <h2>{{ uploads_count }}</h2>
+        <p>CSV Uploads</p>
+        <a href="/ingestion/" class="btn-secondary" style="text-decoration:none;">View</a>
+    </div>
+
+    <div class="card">
+        <h2>Chat</h2>
+        <p>Query vendor FAQs</p>
+        <a href="/chat/" class="btn-secondary" style="text-decoration:none;">Start</a>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Quick Start</h2>
+    <ol>
+        <li><a href="/vendors/">Create a new vendor</a></li>
+        <li><a href="/upload/">Upload a CSV file with 'question' and 'answer' columns</a></li>
+        <li><a href="/chat/">Chat with the bot about that vendor's FAQs</a></li>
+    </ol>
+</div>
+{% endblock %}

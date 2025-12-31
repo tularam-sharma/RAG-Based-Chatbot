@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Ingestion Status - Multi-Vendor ChatBot{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Ingestion Status</h1>
+    
+    <div class="form-group">
+        <label for="vendor_id">Select Vendor:</label>
+        <select id="vendor_id" onchange="selectVendor()">
+            <option value="">-- Choose a vendor --</option>
+            {% for vendor in vendors %}
+                <option value="{{ vendor.id }}" {% if selected_vendor_id == vendor.id %}selected{% endif %}>
+                    {{ vendor.name }}
+                </option>
+            {% endfor %}
+        </select>
+    </div>
+</div>
+
+{% if selected_vendor %}
+<div class="card">
+    <h2>Upload History for {{ selected_vendor.name }}</h2>
+    
+    {% if uploads %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Filename</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Updated</th>
+                    <th>Error</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for upload in uploads %}
+                <tr>
+                    <td>{{ upload.id }}</td>
+                    <td>{{ upload.filename }}</td>
+                    <td>
+                        <span class="badge badge-{{ upload.status }}">{{ upload.status|upper }}</span>
+                    </td>
+                    <td>{{ upload.created_at|date:"Y-m-d H:i" }}</td>
+                    <td>{{ upload.updated_at|date:"Y-m-d H:i" }}</td>
+                    <td>
+                        {% if upload.error_message %}
+                            <span style="color: #e74c3c;">{{ upload.error_message|truncatewords:10 }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No uploads for this vendor yet. <a href="/upload/?vendor_id={{ selected_vendor.id }}">Upload a CSV</a></p>
+    {% endif %}
+</div>
+
+<div class="card" style="text-align: center;">
+    <button onclick="location.reload()">Refresh</button>
+    <a href="/upload/?vendor_id={{ selected_vendor.id }}" class="btn-secondary">Upload New CSV</a>
+</div>
+{% else %}
+<div class="card">
+    <p>Select a vendor above to view ingestion status.</p>
+</div>
+{% endif %}
+
+<script>
+function selectVendor() {
+    const vendorId = document.getElementById('vendor_id').value;
+    if (vendorId) {
+        window.location.href = '/ingestion/?vendor_id=' + vendorId;
+    }
+}
+</script>
+{% endblock %}
